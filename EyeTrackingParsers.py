@@ -9,7 +9,7 @@ class BinocularNoVelocityParser(BaseETParser):
     """
 
     # constants for column names, allow for quick and easy changes
-    TYPE = "type"
+    TYPE_STR = "type"
     PEAK_VELOCITY = "peak velocity"
     AMPLITUDE = "amplitude"
     END_Y = "end y"
@@ -32,11 +32,19 @@ class BinocularNoVelocityParser(BaseETParser):
     LEFT_Y = "left y"
     LEFT_X = "left x"
     TIME = "time"
-    MISSING_VALUE = -1
+    PARSER_EYE_TYPE = Eye.BOTH
 
     @property
     def is_binocular(self):
         return True
+
+    @property
+    def MISSING_VALUES(self) -> list:
+        return ['.', 'C.C']
+
+    @property
+    def MISSING_VALUE(self) -> int:
+        return -1
 
     @classmethod
     def toggle_blink(cls):
@@ -47,8 +55,10 @@ class BinocularNoVelocityParser(BaseETParser):
         """
         parses a sample line from the EDF
         """
-        return {cls.TIME: int(line[0]), cls.LEFT_X: float(line[1]), cls.LEFT_Y: float(line[2]),
-                cls.LEFT_PUPIL_SIZE: float(line[3]), cls.RIGHT_X: float(line[4]), cls.RIGHT_Y: float(line[5]),
+        return {cls.TIME: int(line[0]), cls.LEFT_X: float(line[1]),
+                cls.LEFT_Y: float(line[2]),
+                cls.LEFT_PUPIL_SIZE: float(line[3]),
+                cls.RIGHT_X: float(line[4]), cls.RIGHT_Y: float(line[5]),
                 cls.RIGHT_PUPIL_SIZE: float(line[6])}
 
     @classmethod
@@ -70,13 +80,17 @@ class BinocularNoVelocityParser(BaseETParser):
         """
         parses a fixation line from the EDF
         """
-        return {cls.EYE_STR: line[1], cls.START_TIME: int(line[2]), cls.END_TIME: int(line[3]),
-                cls.DURATION: int(line[4]), cls.AVG_X: float(line[5]), cls.AVG_Y: float(line[6]),
+        return {cls.EYE_STR: line[1], cls.START_TIME: int(line[2]),
+                cls.END_TIME: int(line[3]),
+                cls.DURATION: int(line[4]), cls.AVG_X: float(line[5]),
+                cls.AVG_Y: float(line[6]),
                 cls.AVG_PUPIL_SIZE: float(line[6])}
 
     def get_empty_sample(cls, time):
-        return {cls.TIME: time, cls.LEFT_X: cls.MISSING_VALUE, cls.LEFT_Y: cls.MISSING_VALUE,
-                cls.LEFT_PUPIL_SIZE: cls.MISSING_VALUE, cls.RIGHT_X: cls.MISSING_VALUE, cls.RIGHT_Y: cls.MISSING_VALUE,
+        return {cls.TIME: time, cls.LEFT_X: cls.MISSING_VALUE,
+                cls.LEFT_Y: cls.MISSING_VALUE,
+                cls.LEFT_PUPIL_SIZE: cls.MISSING_VALUE,
+                cls.RIGHT_X: cls.MISSING_VALUE, cls.RIGHT_Y: cls.MISSING_VALUE,
                 cls.RIGHT_PUPIL_SIZE: cls.MISSING_VALUE}
 
     @classmethod
@@ -84,9 +98,12 @@ class BinocularNoVelocityParser(BaseETParser):
         """
         parses a saccade line from the EDF
         """
-        return {cls.EYE_STR: line[1], cls.START_TIME: int(line[2]), cls.END_TIME: int(line[3]),
-                cls.DURATION: int(line[4]), cls.START_X: float(line[5]), cls.START_Y: float(line[6]),
-                cls.END_X: float(line[6]), cls.END_Y: float(line[7]), cls.AMPLITUDE: float(line[8]),
+        return {cls.EYE_STR: line[1], cls.START_TIME: int(line[2]),
+                cls.END_TIME: int(line[3]),
+                cls.DURATION: int(line[4]), cls.START_X: float(line[5]),
+                cls.START_Y: float(line[6]),
+                cls.END_X: float(line[6]), cls.END_Y: float(line[7]),
+                cls.AMPLITUDE: float(line[8]),
                 cls.PEAK_VELOCITY: float(line[9])}
 
     @classmethod
@@ -95,7 +112,8 @@ class BinocularNoVelocityParser(BaseETParser):
         parses a blink line from the EDF
         """
         cls.blink = True
-        return {cls.EYE_STR: line[1], cls.START_TIME: int(line[2]), cls.END_TIME: int(line[3]),
+        return {cls.EYE_STR: line[1], cls.START_TIME: int(line[2]),
+                cls.END_TIME: int(line[3]),
                 cls.DURATION: int(line[4])}
 
     @classmethod
@@ -103,16 +121,21 @@ class BinocularNoVelocityParser(BaseETParser):
         """
         parses a recording start/end line from the EDF
         """
-        return {cls.TYPE: line[0], cls.TIME: int(line[1])}
+        return {cls.TYPE_STR: line[0], cls.TIME: int(line[1])}
 
     @classmethod
     def is_sample(cls, line):
         return line[-2] == '.....'
 
-    @classmethod
-    def get_type(cls):
-        return Eye.BOTH
-
     # has to be last in order to find the parsing methods
-    parse_line_by_token = {'INPUT': parse_input, 'MSG': parse_msg, 'ESACC': parse_saccade, 'EFIX': parse_fixation,
-                           "EBLINK": parse_blinks}
+    @property
+    def parse_line_by_token(self):
+        return {'INPUT': self.parse_input, 'MSG': self.parse_msg,
+                'ESACC': self.parse_saccade, 'EFIX': self.parse_fixation,
+                "EBLINK": self.parse_blinks}
+
+    @classmethod
+    def replace_missing_values(cls, line) -> None:
+        for i in range(len(line)):
+            if line[i] in cls.MISSING_VALUES:
+                line[i] = cls.MISSING_VALUE
