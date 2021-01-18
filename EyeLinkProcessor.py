@@ -1,3 +1,4 @@
+import typing
 from os.path import exists, basename
 from re import split
 from sys import stderr
@@ -7,8 +8,8 @@ import pandas as pd
 from mne import find_events
 from scipy.stats import pearsonr
 
+import Enums as e
 from BaseETParser import BaseETParser
-from Enums import Eye
 
 
 class EyeLinkProcessor:
@@ -17,13 +18,7 @@ class EyeLinkProcessor:
     This class assumes the recording is binocular without velocity
     This class can extract ET events from the samples and synchronize to mne.Raw file by triggers
     """
-    EL_MAX_SAMPLE_RATE = 1000.
-    START_RECORD_TRIGGER = 254
-    STOP_RECORD_TRIGGER = 255
-    SMOOTHING_FACTOR = 10
     ET_SAMPLING_RATE_CONST = 1000
-    BLINK_EVENT = 256
-    SACCADE_EVENT = 257
     NO_SACCADE_DETECTOR_MSG = 'Did not detect saccades as no saccade detector was ' \
                               'supplied to the ET processor. ' \
                               'Please set processor._saccade_detector to an ' \
@@ -31,21 +26,26 @@ class EyeLinkProcessor:
                               'from BaseSaccadeDetector, before calling ' \
                               'detect_saccades()'
 
-    def __init__(self, filename, parser_type, saccade_detector):
+    def __init__(self, filename: str, parser_type: e.ParserType,
+                 saccade_detector: e.SaccadeDetectorType = None,
+                 max_sampling_rate=1000., block_start_trigger=254,
+                 block_end_trigger=255,
+                 smoothing_factor=10, blink_event_trigger=256,
+                 saccade_event_trigger=257):
         """
         initialize a parser
         :param filename: path of the .asc file to parse
         """
+        self.max_sampling_rate = max_sampling_rate
+        self.block_start_trigger = block_start_trigger
+        self.block_end_trigger = block_end_trigger
+        self.smoothing_factor = smoothing_factor
+        self.blink_event_trigger = blink_event_trigger
+        self.saccade_event_trigger = saccade_event_trigger
         self.name = basename(filename)[:-4]
         self._is_synced = False
         self._filename = filename
-        self._samples = []
-        self._messages = []
-        self._triggers = []
-        self._fixations = []
-        self._saccades = []
-        self._blinks = []
-        self._recording_data = []
+        self._init_lists()
         self._parser: BaseETParser = parser_type.value  # enum, get class from enum value
         # method dictionary for parsing
         self._parse_line_by_token = {'INPUT': self._parse_input,
@@ -56,7 +56,7 @@ class EyeLinkProcessor:
         self._dt = None
         self._parse_et_data()  # parse the file
         # get sampling frequency
-        self._sf = EyeLinkProcessor.EL_MAX_SAMPLE_RATE / (
+        self._sf = EyeLinkProcessor.max_sampling_rate / (
                 self._samples.loc[1, self._parser.TIME] - self._samples.loc[
             0, self._parser.TIME])
         self._saccade_detector = saccade_detector.value  # enum, get class from enum value
@@ -65,10 +65,19 @@ class EyeLinkProcessor:
             self.detect_saccades()
         self._eeg_index = None
 
+    def _init_lists(self):
+        self._samples = []
+        self._messages = []
+        self._triggers = []
+        self._fixations = []
+        self._saccades = []
+        self._blinks = []
+        self._recording_data = []
+
     #################################################
     #               'public' methods                #
     #################################################
-    def sync_to_raw(self, raw):
+    def sync_to_raw(self, raw) -> None:
         """
         Creates an ET-EEG index vector for ET samples in self._eeg_index -
         a vector with length of _samples.shape[0]
@@ -106,7 +115,7 @@ class EyeLinkProcessor:
                                  resampling_factor)
         self._is_synced = True
 
-    def detect_saccades(self):
+    def detect_saccades(self) -> None:
         """
         detect saccades based on implemented algorithm in self._saccade_detector
         """
@@ -115,14 +124,14 @@ class EyeLinkProcessor:
             print(self.NO_SACCADE_DETECTOR_MSG, file=stderr)
             return
         self._detected_saccades = []
-        if self._parser.PARSER_EYE_TYPE == Eye.BOTH or \
-                self._parser.PARSER_EYE_TYPE == Eye.LEFT:
+        if self._parser.PARSER_EYE_TYPE == e.Eye.BOTH or \
+                self._parser.PARSER_EYE_TYPE == e.Eye.LEFT:
             left_data = self._samples[
                 [self._parser.LEFT_X, self._parser.LEFT_Y]]
             self._detected_saccades = self._saccade_detector.detect_saccades(
                 left_data, self._sf)
-        if self._parser.PARSER_EYE_TYPE == Eye.BOTH or \
-                self._parser.PARSER_EYE_TYPE == Eye.RIGHT:
+        if self._parser.PARSER_EYE_TYPE == e.Eye.BOTH or \
+                self._parser.PARSER_EYE_TYPE == e.Eye.RIGHT:
             right_data = self._samples[
                 [self._parser.RIGHT_X, self._parser.RIGHT_Y]]
             # choose how to stack the data - if no saccades were added hstack,
@@ -133,10 +142,10 @@ class EyeLinkProcessor:
                 [self._detected_saccades,
                  self._saccade_detector.detect_saccades(right_data,
                                                         self._sf)]).T
-        if self._parser.PARSER_EYE_TYPE == Eye.BOTH:
+        if self._parser.PARSER_EYE_TYPE == e.Eye.BOTH:
             self._combine_monocular_saccades_to_binocular()
 
-    def get_synced_blinks(self):
+    def get_synced_blinks(self) -> np.array:
         """
 
         :return: blink event times in eeg sample number. If binocular, assumes
@@ -145,11 +154,11 @@ class EyeLinkProcessor:
         each blink
         """
         return self._get_synced_et_data(
-            np.asarray(self._blinks[self._parser.START_TIME]))
+            np.array(self._blinks[self._parser.START_TIME]))
 
-    def get_synced_saccades(self):
+    def get_synced_saccades(self) -> np.array:
         return self._get_synced_et_data(
-            np.asarray(self._saccades[self._parser.START_TIME]))
+            np.array(self._saccades[self._parser.START_TIME]))
 
     def get_synced_detected_saccades(self) -> [np.array, None]:
         """
@@ -163,33 +172,33 @@ class EyeLinkProcessor:
         ret = ret[~np.isnan(ret)]
         return ret.astype(np.int)
 
-    def get_eye_x_y_samples(self, eye=Eye.BOTH):
+    def get_eye_x_y_samples(self, eye=e.Eye.BOTH) -> pd.DataFrame:
         """
         returns the samples of the given eye
         :param eye: the eye to retrieve data for
         :type eye: Eye
         :return: pandas DataFrame containing time, x & y positions and pupil size per timepoint for given eye
         """
-        if eye == Eye.RIGHT:
+        if eye == e.Eye.RIGHT:
             return self._samples[
                 [self._parser.TIME] + [col for col in self._samples.columns if
                                        "right" in col]]
-        elif eye == Eye.LEFT:
+        elif eye == e.Eye.LEFT:
             return self._samples[
                 [self._parser.TIME] + [col for col in self._samples.columns if
                                        "left" in col]]
-        elif eye == Eye.BOTH:
+        elif eye == e.Eye.BOTH:
             return self._samples
         else:
-            print(
+            raise NotImplementedError(
                 "%d Not supported. Please choose one of the following:\n" % eye +
-                "".join(["Eye.%s ," % e.name for e in Eye]), file=stderr)
+                "".join(["Eye.%s ," % eye.name for eye in e.Eye]))
 
     #################################################
     #               'private' methods               #
     #################################################
 
-    def _combine_monocular_saccades_to_binocular(self):
+    def _combine_monocular_saccades_to_binocular(self) -> None:
         saccade_indices_l = np.nonzero(self._detected_saccades[:, 0])[0]
         saccade_indices_r = np.nonzero(self._detected_saccades[:, 1])[0]
         diff_mat = np.repeat(saccade_indices_l,
@@ -207,8 +216,8 @@ class EyeLinkProcessor:
             self._detected_saccades[:, 0], dtype=np.int)
         self._detected_saccades[saccade_indices] = 1
 
-    def _get_synced_et_data(self, times: np.ndarray):
-        if self._parser.PARSER_EYE_TYPE == Eye.BOTH:
+    def _get_synced_et_data(self, times: np.ndarray) -> np.array:
+        if self._parser.PARSER_EYE_TYPE == e.Eye.BOTH:
             times = times[np.argsort(times)]  # sort
             times = times[::2]  # get lowest of each pair
         samples = np.asarray(self._samples[self._parser.TIME])
@@ -217,14 +226,15 @@ class EyeLinkProcessor:
         return np.sort(return_array[~np.isnan(return_array)])
 
     @staticmethod
-    def _get_block_correlation(eeg_block, et_block):
+    def _get_block_correlation(eeg_block, et_block) -> float:
         min_len = min(eeg_block.size, et_block.size)
         eeg = eeg_block[:min_len]
         et_block = et_block[:min_len]
         return pearsonr(eeg, et_block)[0]
 
     @staticmethod
-    def _find_common_sequential_elements(a, b):
+    def _find_common_sequential_elements(a, b) -> typing.Tuple[
+        np.array, np.array, np.array]:
         """
         find the common elements in sequential order
         :param a: 1d vector
@@ -242,13 +252,14 @@ class EyeLinkProcessor:
                 max_arr_idx.append(j)
                 j += 1
                 continue
-            isin = np.isin(max_len_arr[j:], min_len_arr[
-                i])  # check if the element is in the rest of the array
-            if np.sum(isin) > 0:  # if it is
-                idx = np.argmax(isin)
-                min_arr_idx.append(i)
-                max_arr_idx.append(j + idx)
-                j += idx + 1  # update to next sequential possible common element
+            else:
+                # check if the element is in the rest of the array
+                isin = np.isin(max_len_arr[j:], min_len_arr[i])
+                if np.sum(isin) > 0:  # if it is
+                    idx = np.argmax(isin)
+                    min_arr_idx.append(i)
+                    max_arr_idx.append(j + idx)
+                    j += idx + 1  # update to next sequential possible common element
             if j >= max_len_arr.size:
                 break
         min_arr_idx = np.asarray(min_arr_idx)
@@ -258,18 +269,19 @@ class EyeLinkProcessor:
             max_len_arr[max_arr_idx], max_arr_idx, min_arr_idx)
 
     def _split_to_recording_blocks(self, eeg_trigs, et_samples, et_timediff,
-                                   et_trig_ch):
+                                   et_trig_ch) -> typing.Tuple[
+        np.array, np.array, np.array, np.array]:
         # split eeg to blocks based on 254 start record value
-        eeg_block_starts = np.where(eeg_trigs == self.START_RECORD_TRIGGER)[0]
+        eeg_block_starts = np.where(eeg_trigs == self.block_start_trigger)[0]
         eeg_blocks = np.split(eeg_trigs, eeg_block_starts)
         eeg_blocks = [np.squeeze(block) for block in eeg_blocks if
-                      block[0] == self.START_RECORD_TRIGGER and np.sum(
+                      block[0] == self.block_start_trigger and np.sum(
                           block) > 0]
         # split et to blocks based on 254 start record value and 255 stop
         et_block_starts = np.hstack(
-            [np.where(et_trig_ch == self.START_RECORD_TRIGGER)[0],
+            [np.where(et_trig_ch == self.block_start_trigger)[0],
              [len(et_trig_ch)]])
-        et_block_pause = np.where(et_trig_ch == self.STOP_RECORD_TRIGGER)[0]
+        et_block_pause = np.where(et_trig_ch == self.block_end_trigger)[0]
         et_recording_stop = np.hstack(
             [np.where(np.diff(et_samples[:, 0]) > et_timediff)[0],
              et_samples[-1, 0]])
@@ -282,7 +294,7 @@ class EyeLinkProcessor:
                             et_block_start_in_et_sample, et_samples, et_sf,
                             et_blocks,
                             matched_eeg_blocks, matched_et_blocks,
-                            resampling_factor):
+                            resampling_factor) -> None:
         """
         for each matched block pair get the EEG
         sample index which corresponds to each ET sample, and record this index
@@ -310,7 +322,7 @@ class EyeLinkProcessor:
 
     @staticmethod
     def _get_et_block_starts_in_et_samples(et_block_starts, et_samples,
-                                           et_trigs):
+                                           et_trigs) -> np.array:
         """
         The variable et_block_start holds the timestamp of the start of each
         block in absolute time since the beginning of the recording, but now we
@@ -336,7 +348,7 @@ class EyeLinkProcessor:
 
     def _correct_sampling_rate_discrepancies(self, eeg_blocks, et_blocks,
                                              matched_eeg_blocks,
-                                             matched_et_blocks):
+                                             matched_et_blocks) -> np.array:
         """
         Correct sampling-rate discrepancies
         Due to different clocks, sampling rates after the initial re-sampling are
@@ -374,15 +386,18 @@ class EyeLinkProcessor:
                 if i > np.ceil(len(eeg_common_idx) * 0.75):
                     problem = f'Matched EEG-ET recording block {b}: failed to fine-tune sampling rates of ET vs. EEG.'
                     print(problem, file=stderr)
-            eeg_latencies = np.round(
-                eeg_latencies * resampling_factor[b]).astype(np.int)
-            eeg_latencies[eeg_latencies < 1] = 1
-            eeg_block = np.zeros(eeg_block.size)
-            eeg_block[eeg_latencies] = block_eeg_trigs
-            eeg_blocks[matched_eeg_blocks[b]] = eeg_block
+                    break
+            if found:
+                eeg_latencies = np.round(
+                    eeg_latencies * resampling_factor[b]).astype(np.int)
+                eeg_latencies[eeg_latencies < 1] = 1
+                eeg_block = np.zeros(eeg_block.size)
+                eeg_block[eeg_latencies] = block_eeg_trigs
+                eeg_blocks[matched_eeg_blocks[b]] = eeg_block
         return resampling_factor
 
-    def _match_eeg_et_blocks(self, eeg_blocks, et_blocks):
+    def _match_eeg_et_blocks(self, eeg_blocks, et_blocks) -> typing.Tuple[
+        np.array, np.array]:
         """
         Find the best match between EEG and ET blocks
         This function can synchronize recordings where the EEG and ET can have a
@@ -399,11 +414,11 @@ class EyeLinkProcessor:
         # smooth with convolution
         smoothed_eeg_blocks = list(
             map(lambda block: np.convolve(block[1:],
-                                          np.ones(self.SMOOTHING_FACTOR),
+                                          np.ones(self.smoothing_factor),
                                           'same'), eeg_blocks))
         smoothed_et_blocks = list(
             map(lambda block: np.convolve(block[1:],
-                                          np.ones(self.SMOOTHING_FACTOR),
+                                          np.ones(self.smoothing_factor),
                                           'same'), et_blocks))
         # finding the highest correlation sum for all eeg blocks
         larger_block_list, shorter_block_list = (
@@ -434,7 +449,7 @@ class EyeLinkProcessor:
                 et_blocks) - diff_in_lists_len + best_offset + 1, 1)
         return matched_eeg_blocks, matched_et_blocks
 
-    def _resample_eeg_to_et(self, eeg_blocks, eeg_sf):
+    def _resample_eeg_to_et(self, eeg_blocks, eeg_sf) -> None:
         """
         Re-sample the EEG event blocks to ET sampling rate.
         Although the final result of the function will be the ET data re-sampled
@@ -454,7 +469,7 @@ class EyeLinkProcessor:
 
     @staticmethod
     def _get_et_blocks(et_block_pause, et_block_starts, et_recording_stop,
-                       et_samples, et_trig_ch):
+                       et_samples, et_trig_ch) -> np.array:
         """
         Generate ET event time course (unlike the EEG event time course, the
         event timestamps are in absolute time (ms) and not sample indexes, so
@@ -495,7 +510,9 @@ class EyeLinkProcessor:
                     possible_ends[-1]] = -1
         return et_blocks
 
-    def _prepare_et_eeg_sync_data(self, raw):
+    def _prepare_et_eeg_sync_data(self, raw) -> typing.Tuple[
+        np.array, np.array, np.array, np.array, np.array,
+        np.array, np.array, np.array]:
         # get et data as np arrays
         et_samples = np.asarray(self._samples, dtype=np.int)
         et_trigs = np.asarray(self._triggers, dtype=np.int)
@@ -527,7 +544,7 @@ class EyeLinkProcessor:
     #################################################
     #               parsing methods                 #
     #################################################
-    def _parse_sample(self, line):
+    def _parse_sample(self, line) -> None:
         """
         parses a sample line from the EDF
         """
@@ -541,43 +558,43 @@ class EyeLinkProcessor:
             self._parser.toggle_blink()
         self._samples.append(s)
 
-    def _parse_msg(self, line):
+    def _parse_msg(self, line) -> None:
         """
         parses a message line from the EDF
         """
         self._messages.append(self._parser.parse_msg(line))
 
-    def _parse_input(self, line):
+    def _parse_input(self, line) -> None:
         """
         parses a trigger line from the EDF
         """
         self._triggers.append(self._parser.parse_input(line))
 
-    def _parse_fixation(self, line):
+    def _parse_fixation(self, line) -> None:
         """
         parses a fixation line from the EDF
         """
         self._fixations.append(self._parser.parse_fixation(line))
 
-    def _parse_saccade(self, line):
+    def _parse_saccade(self, line) -> None:
         """
         parses a saccade line from the EDF
         """
         self._saccades.append(self._parser.parse_saccade(line))
 
-    def _parse_blinks(self, line):
+    def _parse_blinks(self, line) -> None:
         """
         parses a blink line from the EDF
         """
         self._blinks.append(self._parser.parse_blinks(line))
 
-    def _parse_recordings(self, line):
+    def _parse_recordings(self, line) -> None:
         """
         parses a recording start/end line from the EDF
         """
         self._recording_data.append(self._parser.parse_recordings(line))
 
-    def _parse_et_data(self):
+    def _parse_et_data(self) -> None:
         """
         parses the .asc file whose path is self._filename
         """
@@ -606,8 +623,8 @@ class EyeLinkProcessor:
         self._blinks = pd.DataFrame(self._blinks)
         self._recording_data = pd.DataFrame(self._recording_data)
 
-    def _parse_line(self, line):
-        line = split("[ \n\t]+", line)
+    def _parse_line(self, line) -> None:
+        line = split(self._parser.LINE_SPLIT_PATTERN, line)
         # ignore lines that are not samples or have a
         # first token corresponding to one of the tokens in the
         # parsing methods dictionary

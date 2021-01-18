@@ -11,6 +11,13 @@ class BaseETParser(ABC):
     blink = False
 
     @property
+    def LINE_SPLIT_PATTERN(self) -> re.Pattern:
+        """
+        The pattern to split a line by
+        """
+        raise NotImplementedError
+
+    @property
     def RIGHT_X(self) -> str:
         """
         key string for time column in samples DF

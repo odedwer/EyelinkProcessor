@@ -1,4 +1,6 @@
 # In order to add parsers, implement a new class like MonocularNoVelocityParser
+import re
+
 from BaseETParser import BaseETParser
 from Enums import Eye
 
@@ -33,6 +35,7 @@ class BinocularNoVelocityParser(BaseETParser):
     LEFT_X = "left x"
     TIME = "time"
     PARSER_EYE_TYPE = Eye.BOTH
+    LINE_SPLIT_PATTERN = re.compile("[ \n\t]+")
 
     @property
     def is_binocular(self):
